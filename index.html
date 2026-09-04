@@ -12,8 +12,10 @@
 const frame=document.getElementById('planner');
 frame.addEventListener('load',async()=>{
   try{
-    const code=await fetch('planner-update.js?v=2',{cache:'no-store'}).then(r=>r.text());
-    frame.contentWindow.eval(code);
+    const enhancements=await fetch('planner-update.js?v=3',{cache:'no-store'}).then(r=>r.text());
+    frame.contentWindow.eval(enhancements);
+    const colors=await fetch('color-update.js?v=1',{cache:'no-store'}).then(r=>r.text());
+    frame.contentWindow.eval(colors);
   }catch(err){console.error('Planner enhancement failed to load',err)}
 });
 </script>
