@@ -1,81 +1,95 @@
-// My Texas Planner: send completed assignment grades into the Grades tab
+// My Texas Planner: hide graded assignment rows; highlight missing grades.
 (function(){
-  const GRADE_KEY='my_texas_planner_grades_v1';
-  function readBook(){try{return JSON.parse(localStorage.getItem(GRADE_KEY)||'{}')}catch{return{}}}
-  function writeBook(v){localStorage.setItem(GRADE_KEY,JSON.stringify(v))}
-  function ensureCourse(book,id){if(!book[id])book[id]={target:90,override:'',items:[]};return book[id]}
-  function gradeItemId(a){return 'assignment-'+a.id}
-
+  'use strict';
+  const store=window.TexasPlannerGrades;
+  if(!store)throw new Error('Load grades.js before assignment-grade-sync.js.');
+  const $=id=>document.getElementById(id);
+  const style=document.createElement('style');
+  style.textContent=`
+    main.main{min-width:0}
+    #assignments .table-wrap{overflow-x:auto}
+    #assignmentTable{min-width:740px}
+    #assignmentTable tr[hidden]{display:none!important}
+    #assignmentTable tr.awaiting-grade{opacity:1!important}
+    #assignmentTable tr.awaiting-grade td{background:#fffbea}
+    #assignmentTable tr.awaiting-grade td:first-child{border-left:3px solid #d59b13}
+    #assignmentTable .awaiting-grade-label{display:inline-block;margin-top:7px;padding:5px 9px;border:1px solid #eac866;border-radius:8px;background:#fff1bb;color:#705000;font-size:12px;font-weight:800;line-height:1.4}
+    #assignmentGradeStatusSummary{margin:0 0 16px;padding:12px 15px;border:1px solid #e8d8a0;border-radius:12px;background:#fffbea;color:#65501a;font-size:13px;line-height:1.6}
+    #assignmentGradeError{color:#a12622;font-size:13px;line-height:1.5;margin-top:12px}
+  `;
+  document.head.appendChild(style);
   function ensureModal(){
-    if(document.getElementById('assignmentGradeModal'))return;
+    if($('assignmentGradeModal'))return;
     const back=document.createElement('div');back.className='modal-backdrop';back.id='assignmentGradeModal';back.innerHTML=`
-      <div class="modal">
-        <div class="modal-head"><h3 id="assignmentGradeTitle">Add Grade</h3><button class="icon-btn" id="closeAssignmentGrade">✕</button></div>
-        <p class="item-meta" id="assignmentGradeMeta" style="margin-bottom:16px"></p>
-        <form id="assignmentGradeForm">
-          <input type="hidden" id="assignmentGradeId">
-          <div class="form-grid">
-            <div class="field"><label>Points earned</label><input id="assignmentGradeEarned" type="number" min="0" step="0.01" required></div>
-            <div class="field"><label>Points possible</label><input id="assignmentGradePossible" type="number" min="0.01" step="0.01" required></div>
-            <div class="field full"><label>Category</label><input id="assignmentGradeCategory" placeholder="Quiz, Exam, Homework, Project..."></div>
-          </div>
-          <div class="actions">
-            <button type="button" class="secondary-btn" id="skipAssignmentGrade">Skip for now</button>
-            <button type="submit" class="primary-btn">Save to Grades</button>
-          </div>
-        </form>
-      </div>`;
+      <div class="modal"><div class="modal-head"><h3 id="assignmentGradeTitle">Add Grade</h3><button class="icon-btn" id="closeAssignmentGrade" aria-label="Close grade form">\u2715</button></div>
+      <p class="item-meta" id="assignmentGradeMeta" style="margin-bottom:16px"></p>
+      <form id="assignmentGradeForm"><input type="hidden" id="assignmentGradeId"><div class="form-grid">
+        <div class="field"><label for="assignmentGradeEarned">Points earned</label><input id="assignmentGradeEarned" type="number" min="0" step="0.01" required></div>
+        <div class="field"><label for="assignmentGradePossible">Points possible</label><input id="assignmentGradePossible" type="number" min="0.01" step="0.01" required></div>
+        <div class="field full"><label for="assignmentGradeCategory">Category</label><input id="assignmentGradeCategory" placeholder="Quiz, Exam, Homework, Project..."></div></div>
+        <div id="assignmentGradeError" role="alert"></div><p class="item-meta">Saving a grade hides this assignment from Assignments. Its score stays editable in Grades.</p>
+        <div class="actions"><button type="button" class="secondary-btn" id="skipAssignmentGrade">Skip for now</button><button type="submit" class="primary-btn">Save to Grades</button></div>
+      </form></div>`;
     document.body.appendChild(back);
     const close=()=>back.classList.remove('open');
-    document.getElementById('closeAssignmentGrade').onclick=close;
-    document.getElementById('skipAssignmentGrade').onclick=close;
+    $('closeAssignmentGrade').onclick=close;$('skipAssignmentGrade').onclick=close;
     back.addEventListener('click',e=>{if(e.target===back)close()});
-    document.getElementById('assignmentGradeForm').addEventListener('submit',e=>{
+    $('assignmentGradeForm').addEventListener('submit',e=>{
       e.preventDefault();
-      const id=document.getElementById('assignmentGradeId').value;
-      const a=data.assignments.find(x=>x.id===id);if(!a)return close();
-      const book=readBook(),course=ensureCourse(book,a.courseId),itemId=gradeItemId(a);
-      const item={id:itemId,name:a.title,category:document.getElementById('assignmentGradeCategory').value.trim()||a.type||'Assignment',earned:Number(document.getElementById('assignmentGradeEarned').value),possible:Number(document.getElementById('assignmentGradePossible').value)};
-      const i=course.items.findIndex(x=>x.id===itemId);if(i>=0)course.items[i]=item;else course.items.push(item);
-      writeBook(book);close();
-      if(document.getElementById('grades')?.classList.contains('active')){const gradeBtn=document.querySelector('[data-view="grades"]');if(gradeBtn)gradeBtn.click()}
-      decorateRows();
+      try{
+        const a=data.assignments.find(x=>x.id===$('assignmentGradeId').value);if(!a)return close();
+        const score={earned:$('assignmentGradeEarned').value,possible:$('assignmentGradePossible').value};
+        if(!store.validScore(score))throw new Error('Enter points earned (zero or more) and points possible (greater than zero).');
+        const book=store.read(),course=store.ensure(book,a.courseId),existing=store.itemFor(a,book);
+        const item={...existing,id:existing?.id||('assignment-'+a.id),assignmentId:a.id,name:a.title,category:$('assignmentGradeCategory').value.trim()||a.type||'Assignment',earned:Number(score.earned),possible:Number(score.possible)};
+        const i=course.items.findIndex(x=>x.id===item.id);if(i>=0)course.items[i]=item;else course.items.push(item);
+        store.write(book);close();
+      }catch(err){$('assignmentGradeError').textContent=err.message||'Unable to save the grade. Your existing data was not changed.';}
     });
   }
-
   function openGradeForAssignment(id){
     ensureModal();const a=data.assignments.find(x=>x.id===id);if(!a)return;
-    const c=courseById(a.courseId),book=readBook(),course=ensureCourse(book,a.courseId),existing=course.items.find(x=>x.id===gradeItemId(a));
-    document.getElementById('assignmentGradeId').value=a.id;
-    document.getElementById('assignmentGradeTitle').textContent=existing?'Edit Assignment Grade':'Add Assignment Grade';
-    document.getElementById('assignmentGradeMeta').textContent=(c?.code?c.code+' · ':'')+a.title;
-    document.getElementById('assignmentGradeEarned').value=existing?.earned??'';
-    document.getElementById('assignmentGradePossible').value=existing?.possible??'';
-    document.getElementById('assignmentGradeCategory').value=existing?.category??(a.type||'');
-    document.getElementById('assignmentGradeModal').classList.add('open');
+    try{
+      const c=courseById(a.courseId),book=store.read(),existing=store.itemFor(a,book);
+      $('assignmentGradeId').value=a.id;$('assignmentGradeTitle').textContent=existing?'Edit Assignment Grade':'Add Assignment Grade';$('assignmentGradeMeta').textContent=(c?.code?c.code+' / ':'')+a.title;
+      $('assignmentGradeEarned').value=existing?.earned??'';$('assignmentGradePossible').value=existing?.possible??'';$('assignmentGradeCategory').value=existing?.category??a.type??'';$('assignmentGradeError').textContent='';$('assignmentGradeModal').classList.add('open');
+    }catch(err){alert('Unable to read saved grades. Your data was not changed.');}
   }
-
   const baseToggle=toggleAssignment;
   toggleAssignment=function(id){
-    const a=data.assignments.find(x=>x.id===id);const wasDone=!!a?.done;
-    baseToggle(id);
-    const now=data.assignments.find(x=>x.id===id);
-    if(now && !wasDone && now.done)setTimeout(()=>openGradeForAssignment(id),0);
+    const wasDone=!!data.assignments.find(x=>x.id===id)?.done;
+    const result=baseToggle.apply(this,arguments);const now=data.assignments.find(x=>x.id===id);
+    if(now&&!wasDone&&now.done){try{if(!store.hasGrade(now,store.read()))setTimeout(()=>openGradeForAssignment(id),0);}catch(_){/* Keep saved data unchanged on read failure. */}}
+    return result;
   };
-
   function sortedAssignments(){return [...data.assignments].sort((a,b)=>{if(a.done!==b.done)return a.done?1:-1;if(!a.due&&b.due)return 1;if(a.due&&!b.due)return -1;return (a.due||'').localeCompare(b.due||'')})}
   function decorateRows(){
-    const table=document.getElementById('assignmentTable');if(!table)return;
-    const rows=table.querySelectorAll('tr'),sorted=sortedAssignments(),book=readBook();
-    rows.forEach((tr,i)=>{
-      const a=sorted[i];if(!a||!a.done)return;
-      const cell=tr.querySelector('td:last-child');if(!cell||cell.querySelector('.assignment-grade-btn'))return;
-      const course=book[a.courseId],has=!!course?.items?.some(x=>x.id===gradeItemId(a));
-      const btn=document.createElement('button');btn.className='mini-btn assignment-grade-btn';btn.style.marginLeft='6px';btn.textContent=has?'Edit Grade':'Add Grade';btn.onclick=()=>openGradeForAssignment(a.id);cell.appendChild(btn);
+    const table=$('assignmentTable');if(!table)return;
+    let summary=$('assignmentGradeStatusSummary');
+    if(!summary){summary=document.createElement('div');summary.id='assignmentGradeStatusSummary';summary.setAttribute('role','status');summary.setAttribute('aria-live','polite');const wrap=table.closest('.table-wrap')||table.closest('table');wrap?.before(summary);}
+    let book;
+    try{book=store.read();}catch(_){summary.textContent='Saved grades could not be read. All assignments are shown and saved data is unchanged.';return;}
+    $('assignmentStatusEmpty')?.remove();
+    const sorted=sortedAssignments();let hidden=0;
+    table.querySelectorAll('tr').forEach((tr,i)=>{
+      const a=sorted[i];if(!a||!tr.querySelector('input.checkbox'))return;
+      tr.dataset.assignmentId=a.id;
+      const graded=store.hasGrade(a,book);tr.hidden=graded;tr.classList.toggle('awaiting-grade',!graded);if(graded)hidden++;
+      const titleCell=tr.querySelector('td:nth-child(2)');
+      if(titleCell){titleCell.querySelector('.awaiting-grade-label')?.remove();if(!graded){const tag=document.createElement('div');tag.className='awaiting-grade-label';tag.textContent='Awaiting grade';tag.title=a.done?'Marked complete in the planner; no score entered yet.':'No score entered yet. The completion checkbox still tracks whether you have finished this assignment.';titleCell.appendChild(tag);}}
+      const cell=tr.querySelector('td:last-child');if(!cell)return;
+      let btn=cell.querySelector('.assignment-grade-btn');
+      if(!btn){btn=document.createElement('button');btn.type='button';btn.className='mini-btn assignment-grade-btn';btn.style.marginLeft='6px';cell.appendChild(btn);}
+      btn.textContent=graded?'Edit Grade':'Add Grade';btn.onclick=()=>openGradeForAssignment(a.id);
     });
+    const awaiting=sorted.length-hidden;
+    summary.textContent=awaiting+' awaiting grade / '+hidden+' graded '+(hidden===1?'assignment hidden':'assignments hidden')+'. Scores are kept in Grades. The checkbox still tracks assignment completion.';
+    if(sorted.length&&awaiting===0){const row=document.createElement('tr');row.id='assignmentStatusEmpty';const cell=document.createElement('td');cell.colSpan=7;const empty=document.createElement('div');empty.className='empty';empty.textContent='All assignments have grades. View or edit their scores in the Grades tab.';cell.appendChild(empty);row.appendChild(cell);table.appendChild(row);}
+    // Keep hidden rows in place so existing row-index-based editors remain correct.
   }
-
   const baseRenderAssignments=renderAssignments;
-  renderAssignments=function(){baseRenderAssignments();decorateRows()};
-  ensureModal();decorateRows();
+  renderAssignments=function(){baseRenderAssignments.apply(this,arguments);decorateRows();};
+  window.addEventListener(store.changeEvent,()=>renderAssignments());
+  window.addEventListener('storage',e=>{if(e.key===store.key||e.key===null)renderAssignments();});
+  ensureModal();renderAssignments();
 })();
