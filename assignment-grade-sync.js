@@ -1,4 +1,4 @@
-// My Texas Planner: hide graded assignment rows; highlight missing grades.
+// My Texas Planner: hide graded rows; only completed assignments await grades.
 (function(){
   'use strict';
   const store=window.TexasPlannerGrades;
@@ -70,21 +70,22 @@
     let book;
     try{book=store.read();}catch(_){summary.textContent='Saved grades could not be read. All assignments are shown and saved data is unchanged.';return;}
     $('assignmentStatusEmpty')?.remove();
-    const sorted=sortedAssignments();let hidden=0;
+    const sorted=sortedAssignments();let hidden=0,awaiting=0;
     table.querySelectorAll('tr').forEach((tr,i)=>{
       const a=sorted[i];if(!a||!tr.querySelector('input.checkbox'))return;
       tr.dataset.assignmentId=a.id;
-      const graded=store.hasGrade(a,book);tr.hidden=graded;tr.classList.toggle('awaiting-grade',!graded);if(graded)hidden++;
+      const graded=store.hasGrade(a,book),awaitingGrade=!!a.done&&!graded;
+      tr.hidden=graded;tr.classList.toggle('awaiting-grade',awaitingGrade);if(graded)hidden++;if(awaitingGrade)awaiting++;
       const titleCell=tr.querySelector('td:nth-child(2)');
-      if(titleCell){titleCell.querySelector('.awaiting-grade-label')?.remove();if(!graded){const tag=document.createElement('div');tag.className='awaiting-grade-label';tag.textContent='Awaiting grade';tag.title=a.done?'Marked complete in the planner; no score entered yet.':'No score entered yet. The completion checkbox still tracks whether you have finished this assignment.';titleCell.appendChild(tag);}}
+      if(titleCell){titleCell.querySelector('.awaiting-grade-label')?.remove();if(awaitingGrade){const tag=document.createElement('div');tag.className='awaiting-grade-label';tag.textContent='Awaiting grade';tag.title='Marked complete in the planner; no score entered yet.';titleCell.appendChild(tag);}}
       const cell=tr.querySelector('td:last-child');if(!cell)return;
       let btn=cell.querySelector('.assignment-grade-btn');
       if(!btn){btn=document.createElement('button');btn.type='button';btn.className='mini-btn assignment-grade-btn';btn.style.marginLeft='6px';cell.appendChild(btn);}
       btn.textContent=graded?'Edit Grade':'Add Grade';btn.onclick=()=>openGradeForAssignment(a.id);
     });
-    const awaiting=sorted.length-hidden;
-    summary.textContent=awaiting+' awaiting grade / '+hidden+' graded '+(hidden===1?'assignment hidden':'assignments hidden')+'. Scores are kept in Grades. The checkbox still tracks assignment completion.';
-    if(sorted.length&&awaiting===0){const row=document.createElement('tr');row.id='assignmentStatusEmpty';const cell=document.createElement('td');cell.colSpan=7;const empty=document.createElement('div');empty.className='empty';empty.textContent='All assignments have grades. View or edit their scores in the Grades tab.';cell.appendChild(empty);row.appendChild(cell);table.appendChild(row);}
+    const unfinished=sorted.length-hidden-awaiting;
+    summary.textContent=unfinished+' unfinished / '+awaiting+' awaiting grade / '+hidden+' graded '+(hidden===1?'assignment hidden':'assignments hidden')+'. Scores are kept in Grades. The checkbox still tracks assignment completion.';
+    if(sorted.length&&hidden===sorted.length){const row=document.createElement('tr');row.id='assignmentStatusEmpty';const cell=document.createElement('td');cell.colSpan=7;const empty=document.createElement('div');empty.className='empty';empty.textContent='All assignments have grades. View or edit their scores in the Grades tab.';cell.appendChild(empty);row.appendChild(cell);table.appendChild(row);}
     // Keep hidden rows in place so existing row-index-based editors remain correct.
   }
   const baseRenderAssignments=renderAssignments;
